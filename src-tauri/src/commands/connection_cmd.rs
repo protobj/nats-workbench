@@ -4,6 +4,7 @@ use crate::error::AppError;
 use crate::nats::config::{ConnectionConfig, ConnectionStatus};
 use crate::nats::connection::NatsConnection;
 use crate::state::{AppState, ConnectionSummary};
+use log::{info, error};
 use std::sync::Arc;
 use tauri::State;
 use tauri_plugin_store::StoreExt;
@@ -123,6 +124,8 @@ pub async fn connect(
 ) -> Result<ConnectionStatus, AppError> {
     let conn_id = config.id.clone();
 
+    info!("Connect command: {} ({})", config.label, config.servers.join(","));
+
     if state.connections.contains_key(&conn_id) {
         return Err(AppError::Connection(format!(
             "Connection '{}' already exists. Disconnect first.",
@@ -131,7 +134,10 @@ pub async fn connect(
     }
 
     let mut nats_conn = NatsConnection::new(config.clone());
-    nats_conn.connect().await?;
+    nats_conn.connect().await.map_err(|e| {
+        error!("Connect command failed: {}", e);
+        e
+    })?;
 
     let status = nats_conn.get_status(&app_handle, &conn_id).await;
     nats_conn.start_monitor(app_handle.clone(), conn_id.clone()).await;
@@ -156,6 +162,7 @@ pub async fn disconnect(
     state: State<'_, AppState>,
     id: String,
 ) -> Result<(), AppError> {
+    info!("Disconnect command: {}", id);
     let mut entry = state
         .connections
         .remove(&id)
@@ -200,14 +207,18 @@ pub async fn list_active_connections(
     Ok(summaries)
 }
 
-/// 通过连接、读取服务器版本然后断开来测试连接。
+/// 测试连接：尝试连接后立即断开，返回成功信息或错误。
 #[tauri::command]
 pub async fn test_connection(
     config: ConnectionConfig,
 ) -> Result<String, AppError> {
+    let addr = config.servers.join(", ");
+    info!("Test connection to {}", addr);
     let mut nats_conn = NatsConnection::new(config);
-    nats_conn.connect().await?;
-    let version = nats_conn.stats.server_version.lock().await.clone();
+    nats_conn.connect().await.map_err(|e| {
+        error!("Test failed: {}", e);
+        e
+    })?;
     nats_conn.disconnect().await?;
-    Ok(format!("Connected successfully. Server: {}", version))
+    Ok(format!("Connected successfully to {}", addr))
 }

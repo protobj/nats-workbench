@@ -68,7 +68,7 @@ A cross-platform desktop GUI client for [NATS](https://nats.io), built with **Ta
 ```
 Frontend (React)                    Backend (Rust/Tauri)
 ┌─────────────────────┐    invoke()    ┌──────────────────────┐
-│  Pages/Components   │ ◄──────────► │  Tauri Commands (34)  │
+│  Pages/Components   │ ◄──────────► │  Tauri Commands (65)  │
 │  Zustand Stores     │               │  ├─ connection_cmd    │
 │  Mantine UI         │   listen()     │  ├─ topic_cmd        │
 │  i18n (en/zh)       │ ◄─────────── │  ├─ monitor_cmd      │
@@ -137,7 +137,7 @@ nats-workbench/
 │   ├── tauri.conf.json
 │   └── src/
 │       ├── main.rs               # Entry point
-│       ├── lib.rs                # Tauri Builder (34 commands)
+│       ├── lib.rs                # Tauri Builder (65 commands)
 │       ├── error.rs              # AppError enum
 │       ├── state.rs              # AppState (connection pool)
 │       ├── nats/

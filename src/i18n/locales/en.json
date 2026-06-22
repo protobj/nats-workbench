@@ -31,7 +31,26 @@
     "disconnect": "Disconnect",
     "in": "in",
     "out": "out",
-    "version": "Version"
+    "version": "Version",
+    "serverInfo": "Server Info",
+    "serverDetails": "Server Details",
+    "clientStats": "Client Statistics",
+    "goVersion": "Go Version",
+    "hostPort": "Host:Port",
+    "maxPayload": "Max Payload",
+    "cluster": "Cluster",
+    "messagesSent": "Msgs Sent",
+    "messagesReceived": "Msgs Received",
+    "bytesSent": "Bytes Sent",
+    "bytesReceived": "Bytes Received",
+    "pingsSent": "Pings Sent",
+    "pongsReceived": "Pongs Received",
+    "slowConsumers": "Slow Consumers",
+    "flush": "Flush",
+    "drain": "Drain",
+    "forceReconnect": "Force Reconnect",
+    "noConnection": "No connection selected. Select a connection to view server diagnostics.",
+    "connectionState": "Connection State"
   },
   "connections": {
     "title": "Connection Configurations",
@@ -166,7 +185,10 @@
     "state": "State",
     "status": "Status",
     "details": "Details",
-    "all": "All"
+    "all": "All",
+    "delete": "Delete",
+    "deleted": "Deleted",
+    "active": "Active"
   },
   "auth": {
     "authentication": "Authentication",
@@ -249,7 +271,13 @@
     "vals": "vals",
     "create": "Create",
     "createStore": "Create Store",
-    "deleteStore": "Delete Store"
+    "deleteStore": "Delete Store",
+    "detail": "Entry Detail",
+    "history": "History",
+    "revision": "Revision",
+    "operation": "Operation",
+    "delta": "Delta",
+    "created": "Created"
   },
   "objectStore": {
     "title": "Object Store",
@@ -263,6 +291,13 @@
     "selectStore": "Select an object store to browse",
     "create": "Create",
     "createStore": "Create Store",
-    "deleteStore": "Delete Store"
+    "deleteStore": "Delete Store",
+    "info": "Object Info",
+    "seal": "Seal Bucket",
+    "sealWarning": "This will prevent further writes. Continue?",
+    "rename": "Rename",
+    "newName": "New Name",
+    "downloadContent": "Download Content",
+    "chunks": "Chunks"
   }
 }

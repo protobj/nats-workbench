@@ -2,6 +2,7 @@
 
 use crate::error::AppError;
 use crate::state::AppState;
+use log::{info, error};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -92,6 +93,7 @@ pub async fn discover_room_topics(
     room_id: String,
     duration_ms: Option<u64>,
 ) -> Result<Vec<RoomTopicInfo>, AppError> {
+    info!("Discovering room topics for room '{}'", room_id);
     let client = get_client(&state, &connection_id)?;
     let duration = std::time::Duration::from_millis(duration_ms.unwrap_or(3000));
     let subject = format!("room.{}.*", room_id);
@@ -99,7 +101,7 @@ pub async fn discover_room_topics(
     let mut subscriber = client
         .subscribe(subject.clone())
         .await
-        .map_err(|e| AppError::Nats(e.to_string()))?;
+        .map_err(|e| { error!("Operation failed: {}", e); AppError::Nats(e.to_string()) })?;
 
     let topics: Arc<dashmap::DashMap<String, (u64, bool)>> = Arc::new(dashmap::DashMap::new());
     let topics_clone = topics.clone();
@@ -140,6 +142,7 @@ pub async fn run_benchmark(
     app_handle: tauri::AppHandle,
     config: BenchmarkConfig,
 ) -> Result<BenchmarkResult, AppError> {
+    info!("Benchmark: {} msg/s × {} secs on {}", config.rate_per_sec, config.duration_secs, config.subject);
     let client = get_client(&state, &config.connection_id)?;
     let payload = "x".repeat(config.payload_size);
     let interval_ms = 1000u64 / u64::max(config.rate_per_sec, 1);
@@ -157,7 +160,7 @@ pub async fn run_benchmark(
     let mut sub = sub_client
         .subscribe(reply_clone.clone())
         .await
-        .map_err(|e| AppError::Nats(e.to_string()))?;
+        .map_err(|e| { error!("Operation failed: {}", e); AppError::Nats(e.to_string()) })?;
 
     let recv_handle = tokio::spawn(async move {
         loop {
@@ -228,13 +231,14 @@ pub async fn replay_stream_messages(
     state: State<'_, AppState>,
     config: ReplayConfig,
 ) -> Result<ReplayProgress, AppError> {
+    info!("Replaying from stream '{}' to '{}'", config.stream_name, config.target_subject);
     let client = get_client(&state, &config.connection_id)?;
     let jetstream = async_nats::jetstream::new(client.clone());
 
     let stream = jetstream
         .get_stream(&config.stream_name)
         .await
-        .map_err(|e| AppError::Nats(e.to_string()))?;
+        .map_err(|e| { error!("Operation failed: {}", e); AppError::Nats(e.to_string()) })?;
 
     use async_nats::jetstream::consumer;
     let consumer_cfg = consumer::pull::Config {
@@ -248,7 +252,7 @@ pub async fn replay_stream_messages(
     let consumer = stream
         .create_consumer(consumer_cfg)
         .await
-        .map_err(|e| AppError::Nats(e.to_string()))?;
+        .map_err(|e| { error!("Operation failed: {}", e); AppError::Nats(e.to_string()) })?;
 
     let limit = config.count.unwrap_or(100);
     let mut batch = consumer
@@ -256,7 +260,7 @@ pub async fn replay_stream_messages(
         .max_messages(limit)
         .messages()
         .await
-        .map_err(|e| AppError::Nats(e.to_string()))?;
+        .map_err(|e| { error!("Operation failed: {}", e); AppError::Nats(e.to_string()) })?;
 
     let mut total = 0u64;
     let mut replayed = 0u64;

@@ -68,7 +68,7 @@
 ```
 前端 (React)                        后端 (Rust/Tauri)
 ┌─────────────────────┐  invoke()    ┌──────────────────────┐
-│  Pages/Components    │ ◄──────────► │  Tauri Commands (34) │
+│  Pages/Components    │ ◄──────────► │  Tauri Commands (65) │
 │  Zustand Stores      │              │  ├─ connection_cmd   │
 │  Mantine UI          │  listen()    │  ├─ topic_cmd       │
 │  i18n (en/zh)        │ ◄─────────── │  ├─ monitor_cmd     │
@@ -137,7 +137,7 @@ nats-workbench/
 │   ├── tauri.conf.json
 │   └── src/
 │       ├── main.rs
-│       ├── lib.rs                # Tauri Builder，注册 41 个命令
+│       ├── lib.rs                # Tauri Builder，注册 65 个命令
 │       ├── error.rs              # AppError 枚举
 │       ├── state.rs              # AppState（连接池）
 │       ├── nats/

@@ -166,7 +166,10 @@
     "state": "状态",
     "status": "状态",
     "details": "详情",
-    "all": "全部"
+    "all": "全部",
+    "delete": "删除",
+    "deleted": "已删除",
+    "active": "活跃"
   },
   "auth": {
     "authentication": "身份认证",
@@ -249,7 +252,13 @@
     "vals": "条",
     "create": "创建",
     "createStore": "创建存储桶",
-    "deleteStore": "删除存储桶"
+    "deleteStore": "删除存储桶",
+    "detail": "条目详情",
+    "history": "历史版本",
+    "revision": "版本号",
+    "operation": "操作类型",
+    "delta": "增量",
+    "created": "创建时间"
   },
   "objectStore": {
     "title": "对象存储",
@@ -263,6 +272,13 @@
     "selectStore": "选择一个对象存储进行浏览",
     "create": "创建",
     "createStore": "创建存储桶",
-    "deleteStore": "删除存储桶"
+    "deleteStore": "删除存储桶",
+    "info": "对象信息",
+    "seal": "密封存储桶",
+    "sealWarning": "密封后将阻止写入。是否继续？",
+    "rename": "重命名",
+    "newName": "新名称",
+    "downloadContent": "下载内容",
+    "chunks": "分块数"
   }
 }

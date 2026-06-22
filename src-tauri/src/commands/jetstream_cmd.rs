@@ -2,8 +2,10 @@
 
 use crate::error::AppError;
 use crate::state::AppState;
+use log::{info, error};
 use serde::{Deserialize, Serialize};
 use tauri::State;
+use time::OffsetDateTime;
 use tokio_stream::StreamExt;
 
 /// 通过连接 ID 从应用状态中获取已连接的 NATS 客户端的辅助函数。
@@ -93,6 +95,7 @@ pub async fn list_streams(
     state: State<'_, AppState>,
     connection_id: String,
 ) -> Result<Vec<StreamInfo>, AppError> {
+    info!("Listing streams for {}", connection_id);
     let client = get_client(&state, &connection_id)?;
     let jetstream = async_nats::jetstream::new(client);
 
@@ -141,6 +144,7 @@ pub async fn create_stream(
     connection_id: String,
     config: StreamConfigInput,
 ) -> Result<StreamInfo, AppError> {
+    info!("Creating stream '{}' on {}", config.name, connection_id);
     let client = get_client(&state, &connection_id)?;
     let jetstream = async_nats::jetstream::new(client);
 
@@ -157,7 +161,7 @@ pub async fn create_stream(
     let stream = jetstream
         .create_stream(stream_config)
         .await
-        .map_err(|e| AppError::Nats(e.to_string()))?;
+        .map_err(|e| { error!("Operation failed: {}", e); AppError::Nats(e.to_string()) })?;
 
     let info = stream.cached_info().clone();
     Ok(StreamInfo {
@@ -184,13 +188,14 @@ pub async fn delete_stream(
     connection_id: String,
     stream_name: String,
 ) -> Result<(), AppError> {
+    info!("Deleting stream '{}' on {}", stream_name, connection_id);
     let client = get_client(&state, &connection_id)?;
     let jetstream = async_nats::jetstream::new(client);
     jetstream
         .delete_stream(&stream_name)
         .await
         .map(|_| ())
-        .map_err(|e| AppError::Nats(e.to_string()))
+        .map_err(|e| { error!("Operation failed: {}", e); AppError::Nats(e.to_string()) })
 }
 
 /// 清空 JetStream 流中的所有消息。
@@ -200,12 +205,13 @@ pub async fn purge_stream(
     connection_id: String,
     stream_name: String,
 ) -> Result<(), AppError> {
+    info!("Purging stream '{}' on {}", stream_name, connection_id);
     let client = get_client(&state, &connection_id)?;
     let stream = async_nats::jetstream::new(client)
         .get_stream(&stream_name)
         .await
-        .map_err(|e| AppError::Nats(e.to_string()))?;
-    stream.purge().await.map(|_| ()).map_err(|e| AppError::Nats(e.to_string()))
+        .map_err(|e| { error!("Operation failed: {}", e); AppError::Nats(e.to_string()) })?;
+    stream.purge().await.map(|_| ()).map_err(|e| { error!("Operation failed: {}", e); AppError::Nats(e.to_string()) })
 }
 
 /// 从流中获取消息，可指定起始序号和数量限制。
@@ -223,7 +229,7 @@ pub async fn stream_messages(
     let stream = jetstream
         .get_stream(&stream_name)
         .await
-        .map_err(|e| AppError::Nats(e.to_string()))?;
+        .map_err(|e| { error!("Operation failed: {}", e); AppError::Nats(e.to_string()) })?;
 
     use async_nats::jetstream::consumer;
     let cfg = consumer::pull::Config {
@@ -237,14 +243,14 @@ pub async fn stream_messages(
     let consumer = stream
         .create_consumer(cfg)
         .await
-        .map_err(|e| AppError::Nats(e.to_string()))?;
+        .map_err(|e| { error!("Operation failed: {}", e); AppError::Nats(e.to_string()) })?;
 
     let mut batch = consumer
         .fetch()
         .max_messages(limit.unwrap_or(50))
         .messages()
         .await
-        .map_err(|e| AppError::Nats(e.to_string()))?;
+        .map_err(|e| { error!("Operation failed: {}", e); AppError::Nats(e.to_string()) })?;
 
     let mut msgs = Vec::new();
     while let Some(msg) = batch.next().await {
@@ -278,12 +284,12 @@ pub async fn delete_stream_message(
     let stream = jetstream
         .get_stream(&stream_name)
         .await
-        .map_err(|e| AppError::Nats(e.to_string()))?;
+        .map_err(|e| { error!("Operation failed: {}", e); AppError::Nats(e.to_string()) })?;
     stream
         .delete_message(seq)
         .await
         .map(|_| ())
-        .map_err(|e| AppError::Nats(e.to_string()))
+        .map_err(|e| { error!("Operation failed: {}", e); AppError::Nats(e.to_string()) })
 }
 
 /// 列出给定流的所有消费者。
@@ -293,13 +299,14 @@ pub async fn list_consumers(
     connection_id: String,
     stream_name: String,
 ) -> Result<Vec<ConsumerInfo>, AppError> {
+    info!("Listing consumers for stream '{}'", stream_name);
     let client = get_client(&state, &connection_id)?;
     let jetstream = async_nats::jetstream::new(client);
 
     let stream = jetstream
         .get_stream(&stream_name)
         .await
-        .map_err(|e| AppError::Nats(e.to_string()))?;
+        .map_err(|e| { error!("Operation failed: {}", e); AppError::Nats(e.to_string()) })?;
 
     let mut names: Vec<String> = Vec::new();
     let mut name_stream = stream.consumer_names();
@@ -342,13 +349,14 @@ pub async fn create_consumer(
     connection_id: String,
     config: ConsumerConfigInput,
 ) -> Result<ConsumerInfo, AppError> {
+    info!("Creating consumer '{}' on stream '{}'", config.name.as_deref().unwrap_or("unnamed"), config.stream);
     let client = get_client(&state, &connection_id)?;
     let jetstream = async_nats::jetstream::new(client);
 
     let stream = jetstream
         .get_stream(&config.stream)
         .await
-        .map_err(|e| AppError::Nats(e.to_string()))?;
+        .map_err(|e| { error!("Operation failed: {}", e); AppError::Nats(e.to_string()) })?;
 
     use async_nats::jetstream::consumer;
     let mut cfg = consumer::pull::Config {
@@ -386,7 +394,7 @@ pub async fn create_consumer(
     let ci = stream
         .create_consumer(cfg)
         .await
-        .map_err(|e| AppError::Nats(e.to_string()))?;
+        .map_err(|e| { error!("Operation failed: {}", e); AppError::Nats(e.to_string()) })?;
 
     let info = ci.cached_info();
     Ok(ConsumerInfo {
@@ -413,11 +421,210 @@ pub async fn delete_consumer(
     stream_name: String,
     consumer_name: String,
 ) -> Result<(), AppError> {
+    info!("Deleting consumer '{}' from stream '{}'", consumer_name, stream_name);
     let client = get_client(&state, &connection_id)?;
     let jetstream = async_nats::jetstream::new(client);
     jetstream
         .delete_consumer_from_stream(&stream_name, &consumer_name)
         .await
         .map(|_| ())
-        .map_err(|e| AppError::Nats(e.to_string()))
+        .map_err(|e| { error!("Operation failed: {}", e); AppError::Nats(e.to_string()) })
+}
+
+/// 更新流配置
+#[tauri::command]
+pub async fn update_stream(
+    state: State<'_, AppState>,
+    connection_id: String,
+    stream_name: String,
+    max_msgs: Option<i64>,
+    max_bytes: Option<i64>,
+    max_age_secs: Option<i64>,
+    max_msg_size: Option<i64>,
+    replicas: Option<u32>,
+    description: Option<String>,
+) -> Result<StreamInfo, AppError> {
+    info!("Updating stream '{}' config on {}", stream_name, connection_id);
+    let client = get_client(&state, &connection_id)?;
+    let jetstream = async_nats::jetstream::new(client);
+
+    let stream = jetstream
+        .get_stream(&stream_name)
+        .await
+        .map_err(|e| { error!("Operation failed: {}", e); AppError::Nats(e.to_string()) })?;
+
+    let mut config = stream.cached_info().config.clone();
+
+    if let Some(v) = max_msgs {
+        config.max_messages = v;
+    }
+    if let Some(v) = max_bytes {
+        config.max_bytes = v;
+    }
+    if let Some(v) = max_age_secs {
+        config.max_age = std::time::Duration::from_secs(v as u64);
+    }
+    if let Some(v) = max_msg_size {
+        config.max_message_size = v as i32;
+    }
+    if let Some(v) = replicas {
+        config.num_replicas = v as usize;
+    }
+    if let Some(v) = description {
+        config.description = Some(v);
+    }
+
+    let info = jetstream
+        .update_stream(config)
+        .await
+        .map_err(|e| { error!("Operation failed: {}", e); AppError::Nats(e.to_string()) })?;
+
+    let subjects: Vec<String> = info
+        .config
+        .subjects
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    Ok(StreamInfo {
+        name: info.config.name,
+        subjects,
+        messages: info.state.messages,
+        consumers: info.state.consumer_count as u64,
+        first_seq: info.state.first_sequence,
+        last_seq: info.state.last_sequence,
+        bytes: info.state.bytes,
+        retention: format!("{:?}", info.config.retention),
+        storage: format!("{:?}", info.config.storage),
+        max_bytes: info.config.max_bytes,
+        max_msgs: info.config.max_messages,
+        replicas: info.config.num_replicas as u32,
+        description: info.config.description.unwrap_or_default(),
+    })
+}
+
+/// 直接从流中按序号获取单条消息
+#[tauri::command]
+pub async fn direct_get_message(
+    state: State<'_, AppState>,
+    connection_id: String,
+    stream_name: String,
+    sequence: u64,
+) -> Result<Option<StreamMessage>, AppError> {
+    let client = get_client(&state, &connection_id)?;
+    let jetstream = async_nats::jetstream::new(client);
+    let stream = jetstream
+        .get_stream(&stream_name)
+        .await
+        .map_err(|e| { error!("Operation failed: {}", e); AppError::Nats(e.to_string()) })?;
+
+    match stream.direct_get(sequence).await {
+        Ok(msg) => Ok(Some(StreamMessage {
+            seq: msg.sequence,
+            subject: msg.subject.to_string(),
+            payload: String::from_utf8_lossy(&msg.payload).to_string(),
+            timestamp: msg.time.to_string(),
+            size: msg.payload.len(),
+        })),
+        Err(e) => {
+            if e.to_string().to_lowercase().contains("not found") {
+                Ok(None)
+            } else {
+                Err({ error!("Operation failed: {}", e); AppError::Nats(e.to_string()) })
+            }
+        }
+    }
+}
+
+/// 暂停消费者
+#[tauri::command]
+pub async fn pause_consumer(
+    state: State<'_, AppState>,
+    connection_id: String,
+    stream_name: String,
+    consumer_name: String,
+) -> Result<(), AppError> {
+    info!("Pausing consumer '{}' on stream '{}'", consumer_name, stream_name);
+    let client = get_client(&state, &connection_id)?;
+    let jetstream = async_nats::jetstream::new(client);
+    let stream = jetstream
+        .get_stream(&stream_name)
+        .await
+        .map_err(|e| { error!("Operation failed: {}", e); AppError::Nats(e.to_string()) })?;
+    stream
+        .pause_consumer(&consumer_name, OffsetDateTime::now_utc() + time::Duration::hours(24))
+        .await
+        .map(|_| ())
+        .map_err(|e| { error!("Operation failed: {}", e); AppError::Nats(e.to_string()) })
+}
+
+/// 恢复消费者
+#[tauri::command]
+pub async fn resume_consumer(
+    state: State<'_, AppState>,
+    connection_id: String,
+    stream_name: String,
+    consumer_name: String,
+) -> Result<(), AppError> {
+    info!("Resuming consumer '{}' on stream '{}'", consumer_name, stream_name);
+    let client = get_client(&state, &connection_id)?;
+    let jetstream = async_nats::jetstream::new(client);
+    let stream = jetstream
+        .get_stream(&stream_name)
+        .await
+        .map_err(|e| { error!("Operation failed: {}", e); AppError::Nats(e.to_string()) })?;
+    stream
+        .resume_consumer(&consumer_name)
+        .await
+        .map(|_| ())
+        .map_err(|e| { error!("Operation failed: {}", e); AppError::Nats(e.to_string()) })
+}
+
+/// 重置消费者位移
+#[tauri::command]
+pub async fn reset_consumer(
+    state: State<'_, AppState>,
+    connection_id: String,
+    stream_name: String,
+    consumer_name: String,
+    target_seq: Option<u64>,
+) -> Result<(), AppError> {
+    info!("Resetting consumer '{}' on stream '{}' to seq {:?}", consumer_name, stream_name, target_seq);
+    let client = get_client(&state, &connection_id)?;
+    let jetstream = async_nats::jetstream::new(client);
+    let stream = jetstream
+        .get_stream(&stream_name)
+        .await
+        .map_err(|e| { error!("Operation failed: {}", e); AppError::Nats(e.to_string()) })?;
+    stream
+        .reset_consumer(&consumer_name, target_seq)
+        .await
+        .map(|_| ())
+        .map_err(|e| { error!("Operation failed: {}", e); AppError::Nats(e.to_string()) })
+}
+
+/// 获取流主题列表（分页）
+#[tauri::command]
+pub async fn get_stream_subjects(
+    state: State<'_, AppState>,
+    connection_id: String,
+    stream_name: String,
+    offset: Option<usize>,
+) -> Result<Vec<String>, AppError> {
+    let client = get_client(&state, &connection_id)?;
+    let jetstream = async_nats::jetstream::new(client);
+    let stream = jetstream
+        .get_stream(&stream_name)
+        .await
+        .map_err(|e| { error!("Operation failed: {}", e); AppError::Nats(e.to_string()) })?;
+
+    let subjects: Vec<String> = stream
+        .cached_info()
+        .config
+        .subjects
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+
+    let skip = offset.unwrap_or(0);
+    Ok(subjects.into_iter().skip(skip).collect())
 }

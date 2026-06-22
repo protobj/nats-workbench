@@ -6,6 +6,7 @@
 import { create } from 'zustand'
 import { invoke } from '@tauri-apps/api/core'
 import type { SubscriptionInfo } from '@/types'
+import { logger } from '@/utils/logger'
 
 /** 管理活跃订阅列表和主题发现结果。 */
 interface TopicState {
@@ -24,6 +25,7 @@ export const useTopicStore = create<TopicState>((set, get) => ({
   discovering: false,
 
   subscribe: async (connectionId, subject) => {
+    logger.info('Subscribing', { subject })
     const sub = await invoke<SubscriptionInfo>('subscribe', {
       req: { connection_id: connectionId, subject },
     })
@@ -32,6 +34,7 @@ export const useTopicStore = create<TopicState>((set, get) => ({
   },
 
   unsubscribe: async (subscriptionId, connectionId) => {
+    logger.info('Unsubscribing', { id: subscriptionId })
     await invoke('unsubscribe', {
       req: { connection_id: connectionId, subscription_id: subscriptionId },
     })
@@ -41,6 +44,7 @@ export const useTopicStore = create<TopicState>((set, get) => ({
   },
 
   discoverSubjects: async (connectionId, durationMs) => {
+    logger.info('Discovering subjects')
     set({ discovering: true })
     try {
       const subjects = await invoke<string[]>('discover_subjects', {

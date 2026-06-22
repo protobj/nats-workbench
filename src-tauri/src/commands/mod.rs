@@ -7,3 +7,4 @@ pub mod jetstream_cmd;
 pub mod game_cmd;
 pub mod kv_cmd;
 pub mod object_cmd;
+pub mod connection_info_cmd;

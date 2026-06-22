@@ -1,5 +1,5 @@
 /**
- * @file 对象存储页面 – 管理 NATS 对象存储桶：创建、列出、上传、查看、下载和删除对象。
+ * @file 对象存储页面 – 管理 NATS 对象存储桶：创建、列出、上传、查看、下载、重命名和密封对象。
  */
 
 import { useState, useEffect, useCallback } from 'react'
@@ -8,12 +8,13 @@ import { useDisclosure } from '@mantine/hooks'
 import { useTranslation } from 'react-i18next'
 import { notifications } from '@mantine/notifications'
 import { useNavigate } from 'react-router-dom'
-import { IconRefresh, IconPlus, IconTrash, IconDownload, IconEye } from '@tabler/icons-react'
+import { IconRefresh, IconPlus, IconTrash, IconDownload, IconEye, IconPencil, IconLock } from '@tabler/icons-react'
 import { invoke } from '@tauri-apps/api/core'
 import { useConnectionStore } from '@/stores/connectionStore'
 
 interface ObjStoreInfo { name: string; count: number; bytes: number }
 interface ObjInfo { name: string; bucket: string; size: number; chunks: number; description: string | null; modified: string; deleted: boolean }
+interface ObjInfoDetail { name: string; size: number; chunks: number; modified: string; deleted: boolean }
 
 /** 将原始字节数转换为人类可读的字符串（B/KB/MB/GB）。 */
 function formatBytes(bytes: number) { if (bytes < 1024) return `${bytes} B`; if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`; if (bytes < 1073741824) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`; return `${(bytes / 1073741824).toFixed(2)} GB` }
@@ -31,15 +32,26 @@ export function ObjectStorePage() {
   /** 存储列表获取是否正在进行中。 */
   const [loading, setLoading] = useState(false)
   const [putOpen, { open: openPut, close: closePut }] = useDisclosure(false)
-  const [viewOpen, { open: openView, close: closeView }] = useDisclosure(false)
+  const [infoOpen, { open: openInfo, close: closeInfo }] = useDisclosure(false)
+  const [renameOpen, { open: openRename, close: closeRename }] = useDisclosure(false)
   /** 上传表单中的对象名称。 */
   const [putName, setPutName] = useState('')
   /** 上传表单中的对象数据/内容。 */
   const [putData, setPutData] = useState('')
-  /** 查看对象弹窗中显示的内容。 */
-  const [viewData, setViewData] = useState('')
+  /** 对象信息详情。 */
+  const [objInfo, setObjInfo] = useState<ObjInfoDetail | null>(null)
+  /** 下载的对象内容。 */
+  const [objContent, setObjContent] = useState('')
   /** 新建存储桶名称输入。 */
   const [newBucketName, setNewBucketName] = useState('')
+  /** 重命名的对象原名。 */
+  const [renameOldName, setRenameOldName] = useState('')
+  /** 重命名的新名称输入。 */
+  const [renameNewName, setRenameNewName] = useState('')
+  /** 密封操作是否进行中。 */
+  const [sealing, setSealing] = useState(false)
+  /** 重命名操作是否进行中。 */
+  const [renaming, setRenaming] = useState(false)
 
   /** 获取对象存储桶列表。 */
   async function fetchStores() {
@@ -77,11 +89,21 @@ export function ObjectStorePage() {
     } catch (e: any) { notifications.show({ message: `${t('common.failed')}: ${e}`, color: 'red' }) }
   }
 
-  /** 获取对象内容并在只读弹窗中显示。 */
+  /** 获取对象元数据并在弹窗中显示，同时提供下载内容按钮。 */
   async function handleView(name: string) {
     try {
+      setObjContent('')
+      const info = await invoke<ObjInfoDetail>('obj_info', { connectionId: currentId, bucket: selectedBucket, name })
+      setObjInfo(info)
+      openInfo()
+    } catch (e: any) { notifications.show({ message: `${t('common.failed')}: ${e}`, color: 'red' }) }
+  }
+
+  /** 下载对象内容并在 info 弹窗中展示。 */
+  async function handleDownloadContent(name: string) {
+    try {
       const data = await invoke<string>('obj_get', { connectionId: currentId, bucket: selectedBucket, name })
-      setViewData(data); openView()
+      setObjContent(data)
     } catch (e: any) { notifications.show({ message: `${t('common.failed')}: ${e}`, color: 'red' }) }
   }
 
@@ -94,6 +116,38 @@ export function ObjectStorePage() {
       const a = document.createElement('a'); a.href = url; a.download = name; a.click()
       URL.revokeObjectURL(url)
     } catch (e: any) { notifications.show({ message: `${t('common.failed')}: ${e}`, color: 'red' }) }
+  }
+
+  /** 密封对象存储桶。 */
+  async function handleSeal(bucket: string) {
+    if (!confirm(`${t('objectStore.seal')} "${bucket}"? ${t('objectStore.sealWarning')}`)) return
+    setSealing(true)
+    try {
+      await invoke('obj_seal', { connectionId: currentId, bucket })
+      notifications.show({ message: t('common.success'), color: 'green' })
+      fetchStores()
+    } catch (e: any) { notifications.show({ message: `${t('common.failed')}: ${e}`, color: 'red' }) }
+    finally { setSealing(false) }
+  }
+
+  /** 打开重命名弹窗。 */
+  function openRenameModal(name: string) {
+    setRenameOldName(name)
+    setRenameNewName(name)
+    openRename()
+  }
+
+  /** 执行对象重命名。 */
+  async function handleRename() {
+    if (!selectedBucket || !renameNewName.trim() || renameNewName === renameOldName) return
+    setRenaming(true)
+    try {
+      await invoke('obj_update_metadata', { connectionId: currentId, bucket: selectedBucket, oldName: renameOldName, newName: renameNewName.trim() })
+      notifications.show({ message: t('common.success'), color: 'green' })
+      closeRename()
+      fetchObjects(selectedBucket)
+    } catch (e: any) { notifications.show({ message: `${t('common.failed')}: ${e}`, color: 'red' }) }
+    finally { setRenaming(false) }
   }
 
   /** 使用给定名称创建一个新的对象存储桶。 */
@@ -150,6 +204,7 @@ export function ObjectStorePage() {
                 <Text size="sm" fw={500}>{s.name}</Text>
                 <Group gap={4}>
                   <Badge size="xs">{s.count}</Badge>
+                  <ActionIcon variant="subtle" color="yellow" size="xs" loading={sealing} onClick={(e) => { e.stopPropagation(); handleSeal(s.name) }}><IconLock size={12} /></ActionIcon>
                   <ActionIcon variant="subtle" color="red" size="xs" onClick={(e) => { e.stopPropagation(); handleDeleteBucket(s.name) }}><IconTrash size={12} /></ActionIcon>
                 </Group>
               </Group>
@@ -168,7 +223,7 @@ export function ObjectStorePage() {
               <Button size="xs" leftSection={<IconPlus size={12} />} onClick={() => { setPutName(''); setPutData(''); openPut() }}>{t('objectStore.upload')}</Button>
             </Group>
             <Table striped highlightOnHover style={{ fontSize: 12 }}>
-              <Table.Thead><Table.Tr><Table.Th>{t('objectStore.name')}</Table.Th><Table.Th>{t('objectStore.size')}</Table.Th><Table.Th>{t('objectStore.modified')}</Table.Th><Table.Th w={120}>{t('kv.actions')}</Table.Th></Table.Tr></Table.Thead>
+              <Table.Thead><Table.Tr><Table.Th>{t('objectStore.name')}</Table.Th><Table.Th>{t('objectStore.size')}</Table.Th><Table.Th>{t('objectStore.modified')}</Table.Th><Table.Th w={142}>{t('kv.actions')}</Table.Th></Table.Tr></Table.Thead>
               <Table.Tbody>
                 {objects.map((o) => (
                   <Table.Tr key={o.name} style={{ opacity: o.deleted ? 0.4 : 1 }}>
@@ -179,6 +234,7 @@ export function ObjectStorePage() {
                       <Group gap={4}>
                         <ActionIcon variant="subtle" size="xs" onClick={() => handleView(o.name)}><IconEye size={12} /></ActionIcon>
                         <ActionIcon variant="subtle" size="xs" onClick={() => handleDownload(o.name)}><IconDownload size={12} /></ActionIcon>
+                        <ActionIcon variant="subtle" size="xs" onClick={() => openRenameModal(o.name)}><IconPencil size={12} /></ActionIcon>
                         <ActionIcon variant="subtle" color="red" size="xs" onClick={() => handleDelete(o.name)}><IconTrash size={12} /></ActionIcon>
                       </Group>
                     </Table.Td>
@@ -201,10 +257,31 @@ export function ObjectStorePage() {
         </Stack>
       </Modal>
 
-      <Modal opened={viewOpen} onClose={closeView} title={t('common.details')} size="lg">
-        <pre style={{ background: 'var(--mantine-color-dark-6)', padding: 12, borderRadius: 4, fontSize: 11, fontFamily: 'monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: 400, overflow: 'auto' }}>
-          {viewData}
-        </pre>
+      <Modal opened={infoOpen} onClose={closeInfo} title={t('objectStore.info')} size="lg">
+        {objInfo && (
+          <Stack gap="xs">
+            <TextInput label={t('objectStore.name')} value={objInfo.name} readOnly />
+            <Group grow>
+              <TextInput label={t('objectStore.size')} value={formatBytes(objInfo.size)} readOnly />
+              <TextInput label={t('objectStore.chunks')} value={String(objInfo.chunks)} readOnly />
+            </Group>
+            <TextInput label={t('objectStore.modified')} value={objInfo.modified} readOnly />
+            <Badge color={objInfo.deleted ? 'red' : 'green'} variant="light">{objInfo.deleted ? t('common.deleted') : t('common.active')}</Badge>
+            <Button variant="light" leftSection={<IconDownload size={14} />} onClick={() => handleDownloadContent(objInfo.name)}>{t('objectStore.downloadContent')}</Button>
+            {objContent && (
+              <pre style={{ background: 'var(--mantine-color-dark-6)', padding: 12, borderRadius: 4, fontSize: 11, fontFamily: 'monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: 300, overflow: 'auto' }}>
+                {objContent}
+              </pre>
+            )}
+          </Stack>
+        )}
+      </Modal>
+
+      <Modal opened={renameOpen} onClose={closeRename} title={t('objectStore.rename')} size="sm">
+        <Stack gap="xs">
+          <TextInput label={t('objectStore.newName')} value={renameNewName} onChange={(e) => setRenameNewName(e.target.value)} placeholder={renameOldName} required />
+          <Button onClick={handleRename} loading={renaming}>{t('objectStore.rename')}</Button>
+        </Stack>
       </Modal>
     </div>
   )

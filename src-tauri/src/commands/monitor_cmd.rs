@@ -2,6 +2,7 @@
 
 use crate::error::AppError;
 use crate::state::AppState;
+use log::{info, warn};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tauri::State;
@@ -24,6 +25,9 @@ pub struct ServerStats {
     pub bytes_out: u64,
     pub slow_consumers: u64,
     pub jetstream_enabled: bool,
+    pub cluster_name: String,
+    pub routes_count: u32,
+    pub connect_urls: Vec<String>,
 }
 
 /// 连接到 NATS 服务器的慢消费者信息。
@@ -84,6 +88,7 @@ pub async fn fetch_server_stats(
     state: State<'_, AppState>,
     connection_id: String,
 ) -> Result<ServerStats, AppError> {
+    info!("Fetching server stats for {}", connection_id);
     let conn = state
         .connections
         .get(&connection_id)
@@ -116,6 +121,9 @@ pub async fn fetch_server_stats(
         bytes_out: 0,
         slow_consumers: 0,
         jetstream_enabled: false,
+        cluster_name: String::new(),
+        routes_count: 0,
+        connect_urls: Vec::new(),
     };
 
     if let Ok(json) = serde_json::from_str::<serde_json::Value>(&varz_raw) {
@@ -141,7 +149,24 @@ pub async fn fetch_server_stats(
         if let Some(out_bytes) = json["out_bytes"].as_u64() {
             stats.bytes_out = out_bytes;
         }
-        stats.jetstream_enabled = json["jetstream"].as_object().is_some();
+        stats.jetstream_enabled = json["jetstream"].as_object().is_some()
+            || json["jetstream_stats"].as_object().is_some()
+            || json["jetstream"].as_bool() == Some(true)
+            || !json["jetstream"].is_null();
+
+        // 集群信息
+        stats.cluster_name = json["cluster"].as_str().unwrap_or("").to_string();
+        stats.routes_count = json["routes"].as_array().map(|a| a.len() as u32).unwrap_or(0);
+        stats.connect_urls = json["connect_urls"]
+            .as_array()
+            .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .unwrap_or_default();
+    }
+
+    // 如果 VARZ 中未检测到 JetStream，直接查询 JetStream 账户 API 确认
+    if !stats.jetstream_enabled {
+        let js = async_nats::jetstream::new(client.clone());
+        stats.jetstream_enabled = js.query_account().await.is_ok();
     }
 
     Ok(stats)
@@ -153,6 +178,7 @@ pub async fn fetch_slow_consumers(
     state: State<'_, AppState>,
     connection_id: String,
 ) -> Result<Vec<SlowConsumer>, AppError> {
+    info!("Fetching slow consumers for {}", connection_id);
     let conn = state
         .connections
         .get(&connection_id)
@@ -194,6 +220,9 @@ pub async fn fetch_slow_consumers(
     }
 
     consumers.sort_by_key(|c| -(c.pending as i64));
+    if !consumers.is_empty() {
+        warn!("Found {} slow consumers", consumers.len());
+    }
     Ok(consumers)
 }
 
@@ -203,6 +232,7 @@ pub async fn fetch_jetstream_summary(
     state: State<'_, AppState>,
     connection_id: String,
 ) -> Result<JetStreamSummary, AppError> {
+    info!("Fetching JetStream summary for {}", connection_id);
     let conn = state
         .connections
         .get(&connection_id)

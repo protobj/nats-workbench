@@ -19,6 +19,7 @@ interface ServerStats {
   cpu_percent: number; memory_mb: number; connections: number; subscriptions: number
   messages_in: number; messages_out: number; bytes_in: number; bytes_out: number
   slow_consumers: number; jetstream_enabled: boolean
+  cluster_name: string; routes_count: number; connect_urls: string[]
 }
 
 interface SlowConsumer { client_id: string; name: string; addr: string; pending: number; subscriptions: string[] }
@@ -133,6 +134,14 @@ export function MonitorPage() {
               <div><Text size="xs" c="dimmed">{t('monitor.uptime')}</Text><Text size="xs">{stats.uptime || '-'}</Text></div>
               <div><Text size="xs" c="dimmed">{t('monitor.jetstream')}</Text><Badge size="xs" color={stats.jetstream_enabled ? 'green' : 'gray'}>{stats.jetstream_enabled ? t('monitor.enabled') : t('monitor.disabled')}</Badge></div>
             </SimpleGrid>
+            {stats.cluster_name && (
+              <SimpleGrid cols={4} spacing="xs" mt="xs">
+                <div><Text size="xs" c="dimmed">Cluster</Text><Badge size="xs" color="teal">{stats.cluster_name}</Badge></div>
+                <div><Text size="xs" c="dimmed">Routes</Text><Text size="xs">{stats.routes_count}</Text></div>
+                <div><Text size="xs" c="dimmed">Connect URLs</Text><Text size="xs" ff="monospace" style={{ fontSize: 9 }}>{(stats.connect_urls || []).join(', ') || '-'}</Text></div>
+                <div></div>
+              </SimpleGrid>
+            )}
           </Card>
 
           <SimpleGrid cols={2} mb="md">

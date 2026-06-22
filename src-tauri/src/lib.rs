@@ -42,6 +42,7 @@ pub fn run() {
             commands::topic_cmd::unsubscribe,
             commands::topic_cmd::publish,
             commands::topic_cmd::send_request,
+            commands::topic_cmd::publish_with_headers,
             commands::topic_cmd::discover_subjects,
             // -- 服务器监控 --
             commands::monitor_cmd::fetch_server_stats,
@@ -57,6 +58,12 @@ pub fn run() {
             commands::jetstream_cmd::list_consumers,
             commands::jetstream_cmd::create_consumer,
             commands::jetstream_cmd::delete_consumer,
+            commands::jetstream_cmd::update_stream,
+            commands::jetstream_cmd::direct_get_message,
+            commands::jetstream_cmd::pause_consumer,
+            commands::jetstream_cmd::resume_consumer,
+            commands::jetstream_cmd::reset_consumer,
+            commands::jetstream_cmd::get_stream_subjects,
             // -- 基准测试和回放 --
             commands::game_cmd::discover_room_topics,
             commands::game_cmd::run_benchmark,
@@ -68,6 +75,8 @@ pub fn run() {
             commands::kv_cmd::kv_put,
             commands::kv_cmd::kv_delete,
             commands::kv_cmd::kv_watch,
+            commands::kv_cmd::kv_entry,
+            commands::kv_cmd::kv_history,
             commands::kv_cmd::create_kv_store,
             commands::kv_cmd::delete_kv_store,
             // -- 对象存储 --
@@ -76,8 +85,20 @@ pub fn run() {
             commands::object_cmd::obj_get,
             commands::object_cmd::obj_put,
             commands::object_cmd::obj_delete,
+            commands::object_cmd::obj_info,
+            commands::object_cmd::obj_seal,
+            commands::object_cmd::obj_update_metadata,
             commands::object_cmd::create_object_store,
             commands::object_cmd::delete_object_store,
+            // -- 连接诊断和详细信息 --
+            commands::connection_info_cmd::fetch_server_info,
+            commands::connection_info_cmd::fetch_client_statistics,
+            commands::connection_info_cmd::fetch_connection_state,
+            commands::connection_info_cmd::get_max_payload,
+            commands::connection_info_cmd::flush_connection,
+            commands::connection_info_cmd::drain_connection,
+            commands::connection_info_cmd::force_reconnect,
+            commands::connection_info_cmd::query_account_info,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

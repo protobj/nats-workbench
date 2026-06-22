@@ -2,6 +2,7 @@
 
 use crate::error::AppError;
 use crate::state::AppState;
+use log::{info, error};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tauri::State;
@@ -55,6 +56,7 @@ pub async fn list_object_stores(
     state: State<'_, AppState>,
     connection_id: String,
 ) -> Result<Vec<ObjStoreInfo>, AppError> {
+    info!("Listing object stores");
     let client = get_client(&state, &connection_id)?;
     let jetstream = async_nats::jetstream::new(client);
 
@@ -90,13 +92,13 @@ pub async fn list_objects(
     let store = jetstream
         .get_object_store(&bucket)
         .await
-        .map_err(|e| AppError::Nats(e.to_string()))?;
+        .map_err(|e| { error!("Operation failed: {}", e); AppError::Nats(e.to_string()) })?;
 
     let mut objs = Vec::new();
     let mut list = store
         .list()
         .await
-        .map_err(|e| AppError::Nats(e.to_string()))?;
+        .map_err(|e| { error!("Operation failed: {}", e); AppError::Nats(e.to_string()) })?;
 
     while let Some(info) = list.next().await {
         if let Ok(i) = info {
@@ -129,18 +131,18 @@ pub async fn obj_get(
     let store = jetstream
         .get_object_store(&bucket)
         .await
-        .map_err(|e| AppError::Nats(e.to_string()))?;
+        .map_err(|e| { error!("Operation failed: {}", e); AppError::Nats(e.to_string()) })?;
 
     let mut obj = store
         .get(&name)
         .await
-        .map_err(|e| AppError::Nats(e.to_string()))?;
+        .map_err(|e| { error!("Operation failed: {}", e); AppError::Nats(e.to_string()) })?;
 
     let mut buf = Vec::new();
     use tokio::io::AsyncReadExt;
     obj.read_to_end(&mut buf)
         .await
-        .map_err(|e| AppError::Nats(e.to_string()))?;
+        .map_err(|e| { error!("Operation failed: {}", e); AppError::Nats(e.to_string()) })?;
 
     Ok(String::from_utf8_lossy(&buf).to_string())
 }
@@ -151,12 +153,13 @@ pub async fn obj_put(
     state: State<'_, AppState>,
     req: ObjPutRequest,
 ) -> Result<ObjInfo, AppError> {
+    info!("Object put: {} / {}", req.bucket, req.name);
     let client = get_client(&state, &req.connection_id)?;
     let jetstream = async_nats::jetstream::new(client);
     let store = jetstream
         .get_object_store(&req.bucket)
         .await
-        .map_err(|e| AppError::Nats(e.to_string()))?;
+        .map_err(|e| { error!("Operation failed: {}", e); AppError::Nats(e.to_string()) })?;
 
     use async_nats::jetstream::object_store::ObjectMetadata;
     let meta = ObjectMetadata {
@@ -172,7 +175,7 @@ pub async fn obj_put(
     let info = store
         .put(meta, &mut cursor)
         .await
-        .map_err(|e| AppError::Nats(e.to_string()))?;
+        .map_err(|e| { error!("Operation failed: {}", e); AppError::Nats(e.to_string()) })?;
 
     Ok(ObjInfo {
         name: info.name,
@@ -194,17 +197,18 @@ pub async fn obj_delete(
     bucket: String,
     name: String,
 ) -> Result<(), AppError> {
+    info!("Object delete: {} / {}", bucket, name);
     let client = get_client(&state, &connection_id)?;
     let jetstream = async_nats::jetstream::new(client);
     let store = jetstream
         .get_object_store(&bucket)
         .await
-        .map_err(|e| AppError::Nats(e.to_string()))?;
+        .map_err(|e| { error!("Operation failed: {}", e); AppError::Nats(e.to_string()) })?;
 
     store
         .delete(&name)
         .await
-        .map_err(|e| AppError::Nats(e.to_string()))
+        .map_err(|e| { error!("Operation failed: {}", e); AppError::Nats(e.to_string()) })
 }
 
 /// 创建新的对象存储桶。
@@ -215,6 +219,7 @@ pub async fn create_object_store(
     bucket: String,
     description: Option<String>,
 ) -> Result<(), AppError> {
+    info!("Creating object store '{}'", bucket);
     let client = get_client(&state, &connection_id)?;
     let jetstream = async_nats::jetstream::new(client);
     let cfg = async_nats::jetstream::object_store::Config {
@@ -229,7 +234,7 @@ pub async fn create_object_store(
     .await
     .map_err(|_| AppError::Nats(format!("Create object store '{}' timed out (30s)", bucket)))?
     .map(|_| ())
-    .map_err(|e| AppError::Nats(e.to_string()))
+    .map_err(|e| { error!("Operation failed: {}", e); AppError::Nats(e.to_string()) })
 }
 
 /// 删除对象存储桶。
@@ -239,6 +244,7 @@ pub async fn delete_object_store(
     connection_id: String,
     bucket: String,
 ) -> Result<(), AppError> {
+    info!("Deleting object store '{}'", bucket);
     let client = get_client(&state, &connection_id)?;
     let jetstream = async_nats::jetstream::new(client);
     tokio::time::timeout(
@@ -248,5 +254,98 @@ pub async fn delete_object_store(
     .await
     .map_err(|_| AppError::Nats("Delete object store timed out (30s)".into()))?
     .map(|_| ())
-    .map_err(|e| AppError::Nats(e.to_string()))
+    .map_err(|e| { error!("Operation failed: {}", e); AppError::Nats(e.to_string()) })
+}
+
+/// 获取对象元数据（不下载内容）。
+#[tauri::command]
+pub async fn obj_info(
+    state: State<'_, AppState>,
+    connection_id: String,
+    bucket: String,
+    name: String,
+) -> Result<ObjInfo, AppError> {
+    let client = get_client(&state, &connection_id)?;
+    let jetstream = async_nats::jetstream::new(client);
+    let store = jetstream
+        .get_object_store(&bucket)
+        .await
+        .map_err(|e| { error!("Operation failed: {}", e); AppError::Nats(e.to_string()) })?;
+
+    let info = store
+        .info(&name)
+        .await
+        .map_err(|e| { error!("Operation failed: {}", e); AppError::Nats(e.to_string()) })?;
+
+    Ok(ObjInfo {
+        name: info.name,
+        bucket: info.bucket,
+        size: info.size,
+        chunks: info.chunks,
+        description: info.description,
+        modified: info.modified.map(|t| t.to_string()).unwrap_or_default(),
+        deleted: info.deleted,
+        metadata: info.metadata,
+    })
+}
+
+/// 封存对象存储桶（禁止写入）。
+#[tauri::command]
+pub async fn obj_seal(
+    state: State<'_, AppState>,
+    connection_id: String,
+    bucket: String,
+) -> Result<(), AppError> {
+    let client = get_client(&state, &connection_id)?;
+    let jetstream = async_nats::jetstream::new(client);
+    let mut store = jetstream
+        .get_object_store(&bucket)
+        .await
+        .map_err(|e| { error!("Operation failed: {}", e); AppError::Nats(e.to_string()) })?;
+
+    store
+        .seal()
+        .await
+        .map_err(|e| { error!("Operation failed: {}", e); AppError::Nats(e.to_string()) })
+}
+
+/// 更新对象元数据或重命名。
+#[tauri::command]
+pub async fn obj_update_metadata(
+    state: State<'_, AppState>,
+    connection_id: String,
+    bucket: String,
+    name: String,
+    new_name: Option<String>,
+    new_description: Option<String>,
+) -> Result<ObjInfo, AppError> {
+    let client = get_client(&state, &connection_id)?;
+    let jetstream = async_nats::jetstream::new(client);
+    let store = jetstream
+        .get_object_store(&bucket)
+        .await
+        .map_err(|e| { error!("Operation failed: {}", e); AppError::Nats(e.to_string()) })?;
+
+    let effective_name = new_name.unwrap_or_else(|| name.clone());
+    let metadata = async_nats::jetstream::object_store::UpdateMetadata {
+        name: effective_name,
+        description: new_description,
+        ..Default::default()
+    };
+
+    let info = store
+        .update_metadata(&name, metadata)
+        .await
+        .map_err(|e| { error!("Operation failed: {}", e); AppError::Nats(e.to_string()) })?;
+
+    Ok(ObjInfo {
+        name: info.name,
+        bucket: info.bucket,
+        size: info.size,
+        chunks: info.chunks,
+        description: info.description,
+        modified: info.modified.map(|t| t.to_string()).unwrap_or_default(),
+        deleted: info.deleted,
+        metadata: info.metadata,
+    })
 }

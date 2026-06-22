@@ -5,6 +5,7 @@ use crate::nats::auth::build_connect_options;
 use crate::nats::config::{ConnectionConfig, ConnectionStatus};
 use crate::state::ConnState;
 use dashmap::DashMap;
+use log::{info, warn, error};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tauri::Emitter;
@@ -74,13 +75,19 @@ impl NatsConnection {
         let servers: Vec<String> = self.config.servers.clone();
         let server_strs: Vec<&str> = servers.iter().map(|s| s.as_str()).collect();
 
+        info!("Connecting to {}", servers.join(","));
+
         let client = async_nats::connect_with_options(&server_strs, options)
             .await
-            .map_err(|e| AppError::Connection(format!("Failed to connect: {}", e)))?;
+            .map_err(|e| {
+                error!("Connect failed: {}", e);
+                AppError::Connection(format!("Failed to connect: {}", e))
+            })?;
 
         let addr = server_strs.first().unwrap_or(&"").to_string();
-        *self.stats.server_addr.lock().await = addr;
-        *self.stats.server_version.lock().await = "connected".to_string();
+        info!("Connected to {}", addr);
+        *self.stats.server_addr.lock().await = addr.clone();
+        *self.stats.server_version.lock().await = addr.clone();
         *self.stats.state.lock().await = ConnState::Connected;
         *self.connected_at.lock().await = Some(chrono::Utc::now());
 
@@ -90,6 +97,7 @@ impl NatsConnection {
 
     /// 优雅地停止监控器，中止所有订阅并丢弃NATS客户端。
     pub async fn disconnect(&mut self) -> Result<(), AppError> {
+        info!("Disconnecting");
         let mut handle = self.monitor_handle.lock().await;
         if let Some(h) = handle.take() {
             h.abort();
@@ -137,6 +145,8 @@ impl NatsConnection {
         let stats = self.stats.clone();
         let cid = conn_id.clone();
 
+        info!("Monitor started for {}", conn_id);
+
         let handle = tokio::spawn(async move {
             let mut prev_msgs_in: u64 = 0;
             let mut prev_msgs_out: u64 = 0;
@@ -148,6 +158,7 @@ impl NatsConnection {
 
                 let current_state = stats.state.lock().await.clone();
                 if current_state == ConnState::Closed {
+                    warn!("Monitor stopped for {}", cid);
                     break;
                 }
 

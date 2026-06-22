@@ -4,6 +4,7 @@ use crate::error::AppError;
 use crate::nats::message::NatsMessageEvent;
 use crate::state::AppState;
 use dashmap::DashMap;
+use log::{info, error};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
@@ -73,10 +74,12 @@ pub async fn subscribe(
     let conn_id = req.connection_id.clone();
     let subject = req.subject.clone();
 
+    info!("Subscribe: {} → {}", conn_id, subject);
+
     let mut subscriber = client
         .subscribe(subject.clone())
         .await
-        .map_err(|e| AppError::Nats(e.to_string()))?;
+        .map_err(|e| { error!("Operation failed: {}", e); AppError::Nats(e.to_string()) })?;
 
     let handle = tokio::spawn(async move {
         loop {
@@ -111,6 +114,7 @@ pub async fn unsubscribe(
     state: State<'_, AppState>,
     req: UnsubscribeRequest,
 ) -> Result<(), AppError> {
+    info!("Unsubscribe: {}", req.subscription_id);
     let conn = state
         .connections
         .get(&req.connection_id)
@@ -130,6 +134,7 @@ pub async fn publish(
     state: State<'_, AppState>,
     req: PublishRequest,
 ) -> Result<(), AppError> {
+    info!("Publish: {} → {} ({} bytes)", req.connection_id, req.subject, req.payload.len());
     let conn = state
         .connections
         .get(&req.connection_id)
@@ -145,12 +150,12 @@ pub async fn publish(
         client
             .publish_with_reply(req.subject, reply.clone(), payload)
             .await
-            .map_err(|e| AppError::Nats(e.to_string()))?;
+            .map_err(|e| { error!("Operation failed: {}", e); AppError::Nats(e.to_string()) })?;
     } else {
         client
             .publish(req.subject, payload)
             .await
-            .map_err(|e| AppError::Nats(e.to_string()))?;
+            .map_err(|e| { error!("Operation failed: {}", e); AppError::Nats(e.to_string()) })?;
     }
 
     conn.stats.msgs_out.fetch_add(1, Ordering::Relaxed);
@@ -167,6 +172,7 @@ pub async fn send_request(
     state: State<'_, AppState>,
     req: RequestPayload,
 ) -> Result<String, AppError> {
+    info!("Request: {} → {}", req.connection_id, req.subject);
     let conn = state
         .connections
         .get(&req.connection_id)
@@ -182,9 +188,63 @@ pub async fn send_request(
     let response = client
         .request(req.subject.clone(), payload)
         .await
-        .map_err(|e| AppError::Nats(e.to_string()))?;
+        .map_err(|e| { error!("Operation failed: {}", e); AppError::Nats(e.to_string()) })?;
 
     Ok(String::from_utf8_lossy(&response.payload).to_string())
+}
+
+/// 带 NATS 头部的发布请求。
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct PublishWithHeadersRequest {
+    pub connection_id: String,
+    pub subject: String,
+    pub reply_to: Option<String>,
+    pub payload: String,
+    pub headers: std::collections::HashMap<String, Vec<String>>,
+}
+
+/// 发布带 NATS 头部的消息。
+#[tauri::command]
+pub async fn publish_with_headers(
+    state: State<'_, AppState>,
+    req: PublishWithHeadersRequest,
+) -> Result<(), AppError> {
+    let conn = state
+        .connections
+        .get(&req.connection_id)
+        .ok_or_else(|| AppError::ConnectionNotFound(req.connection_id.clone()))?;
+
+    let client = conn.client.clone().ok_or_else(|| {
+        AppError::Connection("Connection not established".into())
+    })?;
+
+    let payload: bytes::Bytes = req.payload.clone().into_bytes().into();
+
+    let mut header_map = async_nats::HeaderMap::new();
+    for (k, vs) in &req.headers {
+        for v in vs {
+            header_map.append(k.as_str(), v.as_str());
+        }
+    }
+
+    if let Some(ref reply) = req.reply_to {
+        client
+            .publish_with_reply_and_headers(req.subject, reply.clone(), header_map, payload)
+            .await
+            .map_err(|e| { error!("Operation failed: {}", e); AppError::Nats(e.to_string()) })?;
+    } else {
+        client
+            .publish_with_headers(req.subject, header_map, payload)
+            .await
+            .map_err(|e| { error!("Operation failed: {}", e); AppError::Nats(e.to_string()) })?;
+    }
+
+    conn.stats.msgs_out.fetch_add(1, Ordering::Relaxed);
+    conn.stats
+        .bytes_out
+        .fetch_add(req.payload.len() as u64, Ordering::Relaxed);
+
+    Ok(())
 }
 
 /// 通过订阅通配符 `>` 持续一段时间来发现活动的主题。
@@ -195,6 +255,7 @@ pub async fn discover_subjects(
     connection_id: String,
     duration_ms: Option<u64>,
 ) -> Result<Vec<String>, AppError> {
+    info!("Discovering subjects on {}", connection_id);
     let conn = state
         .connections
         .get(&connection_id)
@@ -208,7 +269,7 @@ pub async fn discover_subjects(
     let mut subscriber = client
         .subscribe(">".to_string())
         .await
-        .map_err(|e| AppError::Nats(e.to_string()))?;
+        .map_err(|e| { error!("Operation failed: {}", e); AppError::Nats(e.to_string()) })?;
 
     let conn_id = connection_id.clone();
     let app = app_handle.clone();
@@ -238,5 +299,6 @@ pub async fn discover_subjects(
 
     let mut result: Vec<String> = subjects.iter().map(|e| e.key().clone()).collect();
     result.sort();
+    info!("Discovered {} subjects", result.len());
     Ok(result)
 }

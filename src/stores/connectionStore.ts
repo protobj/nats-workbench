@@ -7,6 +7,7 @@ import { create } from 'zustand'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import type { ConnectionConfig, ConnectionStatus, ConnectionSummary } from '@/types'
+import { logger } from '@/utils/logger'
 
 /** 已保存的连接配置和活跃 NATS 连接的状态与操作。 */
 interface ConnectionState {
@@ -38,6 +39,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
   unlisten: null,
 
   loadConfigs: async () => {
+    logger.debug('Loading configs')
     try {
       const configs = await invoke<ConnectionConfig[]>('list_configs')
       set({ savedConfigs: configs })
@@ -66,6 +68,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
   },
 
   connect: async (config) => {
+    logger.info('Connecting', { label: config.label, servers: config.servers })
     set({ connecting: true })
     try {
       const status = await invoke<ConnectionStatus>('connect', { config })
@@ -76,22 +79,29 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
       })
       return status
     } catch (e) {
+      logger.error('Connection error', e)
       set({ connecting: false })
       throw e
     }
   },
 
   disconnect: async (id) => {
-    await invoke('disconnect', { id })
-    set((s) => {
-      const m = new Map(s.activeStatuses)
-      m.delete(id)
-      const remaining = Array.from(m.keys())
-      return {
-        activeStatuses: m,
-        currentConnectionId: s.currentConnectionId === id ? (remaining[0] ?? null) : s.currentConnectionId,
-      }
-    })
+    logger.info('Disconnecting', { id })
+    try {
+      await invoke('disconnect', { id })
+      set((s) => {
+        const m = new Map(s.activeStatuses)
+        m.delete(id)
+        const remaining = Array.from(m.keys())
+        return {
+          activeStatuses: m,
+          currentConnectionId: s.currentConnectionId === id ? (remaining[0] ?? null) : s.currentConnectionId,
+        }
+      })
+    } catch (e) {
+      logger.error('Connection error', e)
+      throw e
+    }
   },
 
   testConnection: async (config) => {

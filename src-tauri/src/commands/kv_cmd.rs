@@ -2,6 +2,7 @@
 
 use crate::error::AppError;
 use crate::state::AppState;
+use log::{info, error};
 use serde::{Deserialize, Serialize};
 use tauri::Emitter;
 use tauri::State;
@@ -68,6 +69,7 @@ pub async fn list_kv_stores(
     state: State<'_, AppState>,
     connection_id: String,
 ) -> Result<Vec<KvStoreInfo>, AppError> {
+    info!("Listing KV stores");
     let client = get_client(&state, &connection_id)?;
     let jetstream = async_nats::jetstream::new(client);
 
@@ -103,13 +105,13 @@ pub async fn kv_get_keys(
     let store = jetstream
         .get_key_value(&bucket)
         .await
-        .map_err(|e| AppError::Nats(e.to_string()))?;
+        .map_err(|e| { error!("Operation failed: {}", e); AppError::Nats(e.to_string()) })?;
 
     let mut entries = Vec::new();
     let mut keys = store
         .keys()
         .await
-        .map_err(|e| AppError::Nats(e.to_string()))?;
+        .map_err(|e| { error!("Operation failed: {}", e); AppError::Nats(e.to_string()) })?;
 
     while let Some(key_result) = keys.next().await {
         if let Ok(key) = key_result {
@@ -139,7 +141,7 @@ pub async fn kv_get(
     let store = jetstream
         .get_key_value(&req.bucket)
         .await
-        .map_err(|e| AppError::Nats(e.to_string()))?;
+        .map_err(|e| { error!("Operation failed: {}", e); AppError::Nats(e.to_string()) })?;
 
     match store.get(&req.key).await {
         Ok(Some(value)) => Ok(Some(KvEntry {
@@ -150,7 +152,7 @@ pub async fn kv_get(
             operation: "put".into(),
         })),
         Ok(None) => Ok(None),
-        Err(e) => Err(AppError::Nats(e.to_string())),
+        Err(e) => Err({ error!("Operation failed: {}", e); AppError::Nats(e.to_string()) }),
     }
 }
 
@@ -160,17 +162,18 @@ pub async fn kv_put(
     state: State<'_, AppState>,
     req: KvPutRequest,
 ) -> Result<u64, AppError> {
+    info!("KV put: {} / {}", req.bucket, req.key);
     let client = get_client(&state, &req.connection_id)?;
     let jetstream = async_nats::jetstream::new(client);
     let store = jetstream
         .get_key_value(&req.bucket)
         .await
-        .map_err(|e| AppError::Nats(e.to_string()))?;
+        .map_err(|e| { error!("Operation failed: {}", e); AppError::Nats(e.to_string()) })?;
 
     let rev = store
         .put(&req.key, req.value.into_bytes().into())
         .await
-        .map_err(|e| AppError::Nats(e.to_string()))?;
+        .map_err(|e| { error!("Operation failed: {}", e); AppError::Nats(e.to_string()) })?;
     Ok(rev)
 }
 
@@ -182,17 +185,18 @@ pub async fn kv_delete(
     bucket: String,
     key: String,
 ) -> Result<(), AppError> {
+    info!("KV delete: {} / {}", bucket, key);
     let client = get_client(&state, &connection_id)?;
     let jetstream = async_nats::jetstream::new(client);
     let store = jetstream
         .get_key_value(&bucket)
         .await
-        .map_err(|e| AppError::Nats(e.to_string()))?;
+        .map_err(|e| { error!("Operation failed: {}", e); AppError::Nats(e.to_string()) })?;
 
     store
         .delete(&key)
         .await
-        .map_err(|e| AppError::Nats(e.to_string()))
+        .map_err(|e| { error!("Operation failed: {}", e); AppError::Nats(e.to_string()) })
 }
 
 /// 开始监听 KV 桶的变化并发出 `kv-update` 事件。
@@ -204,12 +208,13 @@ pub async fn kv_watch(
     bucket: String,
     key_filter: Option<String>,
 ) -> Result<String, AppError> {
+    info!("Starting KV watch on '{}'", bucket);
     let client = get_client(&state, &connection_id)?;
     let jetstream = async_nats::jetstream::new(client);
     let store = jetstream
         .get_key_value(&bucket)
         .await
-        .map_err(|e| AppError::Nats(e.to_string()))?;
+        .map_err(|e| { error!("Operation failed: {}", e); AppError::Nats(e.to_string()) })?;
 
     let watch_id = uuid::Uuid::new_v4().to_string();
     let wid = watch_id.clone();
@@ -262,6 +267,7 @@ pub async fn create_kv_store(
     bucket: String,
     description: Option<String>,
 ) -> Result<(), AppError> {
+    info!("Creating KV store '{}'", bucket);
     let client = get_client(&state, &connection_id)?;
     let jetstream = async_nats::jetstream::new(client);
     let cfg = async_nats::jetstream::kv::Config {
@@ -276,7 +282,89 @@ pub async fn create_kv_store(
     .await
     .map_err(|_| AppError::Nats(format!("Create KV store '{}' timed out (30s). Is JetStream enabled?", bucket)))?
     .map(|_| ())
-    .map_err(|e| AppError::Nats(e.to_string()))
+    .map_err(|e| { error!("Operation failed: {}", e); AppError::Nats(e.to_string()) })
+}
+
+/// 包含完整元数据的 KV 条目（含修订号、操作类型和所属桶）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KvEntryDetail {
+    pub key: String,
+    pub value: String,
+    pub revision: u64,
+    pub created: String,
+    pub operation: String,
+    pub delta: u64,
+    pub bucket: String,
+}
+
+/// 从 async-nats Entry 转换为 KvEntryDetail 的辅助函数。
+fn entry_to_detail(entry: &async_nats::jetstream::kv::Entry) -> KvEntryDetail {
+    let op = match entry.operation {
+        async_nats::jetstream::kv::Operation::Put => "put",
+        async_nats::jetstream::kv::Operation::Delete => "delete",
+        async_nats::jetstream::kv::Operation::Purge => "purge",
+    };
+    KvEntryDetail {
+        key: entry.key.clone(),
+        value: String::from_utf8_lossy(&entry.value).to_string(),
+        revision: entry.revision,
+        created: entry.created.to_string(),
+        operation: op.to_string(),
+        delta: entry.delta,
+        bucket: entry.bucket.clone(),
+    }
+}
+
+/// 获取 KV 键完整详情（含修订号和操作类型）。
+#[tauri::command]
+pub async fn kv_entry(
+    state: State<'_, AppState>,
+    connection_id: String,
+    bucket: String,
+    key: String,
+) -> Result<Option<KvEntryDetail>, AppError> {
+    let client = get_client(&state, &connection_id)?;
+    let jetstream = async_nats::jetstream::new(client);
+    let store = jetstream
+        .get_key_value(&bucket)
+        .await
+        .map_err(|e| { error!("Operation failed: {}", e); AppError::Nats(e.to_string()) })?;
+
+    match store.entry(&key).await {
+        Ok(Some(entry)) => Ok(Some(entry_to_detail(&entry))),
+        Ok(None) => Ok(None),
+        Err(e) => Err({ error!("Operation failed: {}", e); AppError::Nats(e.to_string()) }),
+    }
+}
+
+/// 获取键的修订历史。
+#[tauri::command]
+pub async fn kv_history(
+    state: State<'_, AppState>,
+    connection_id: String,
+    bucket: String,
+    key: String,
+) -> Result<Vec<KvEntryDetail>, AppError> {
+    let client = get_client(&state, &connection_id)?;
+    let jetstream = async_nats::jetstream::new(client);
+    let store = jetstream
+        .get_key_value(&bucket)
+        .await
+        .map_err(|e| { error!("Operation failed: {}", e); AppError::Nats(e.to_string()) })?;
+
+    let mut history = store
+        .history(&key)
+        .await
+        .map_err(|e| { error!("Operation failed: {}", e); AppError::Nats(e.to_string()) })?;
+
+    let mut entries = Vec::new();
+    while let Some(entry) = history.next().await {
+        match entry {
+            Ok(e) => entries.push(entry_to_detail(&e)),
+            Err(e) => return Err({ error!("Operation failed: {}", e); AppError::Nats(e.to_string()) }),
+        }
+    }
+    Ok(entries)
 }
 
 /// 删除 KV 存储桶。
@@ -286,6 +374,7 @@ pub async fn delete_kv_store(
     connection_id: String,
     bucket: String,
 ) -> Result<(), AppError> {
+    info!("Deleting KV store '{}'", bucket);
     let client = get_client(&state, &connection_id)?;
     let jetstream = async_nats::jetstream::new(client);
     tokio::time::timeout(
@@ -295,5 +384,5 @@ pub async fn delete_kv_store(
     .await
     .map_err(|_| AppError::Nats("Delete KV store timed out (30s)".into()))?
     .map(|_| ())
-    .map_err(|e| AppError::Nats(e.to_string()))
+    .map_err(|e| { error!("Operation failed: {}", e); AppError::Nats(e.to_string()) })
 }

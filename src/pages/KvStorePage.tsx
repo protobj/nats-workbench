@@ -3,18 +3,20 @@
  */
 
 import { useState, useEffect, useCallback } from 'react'
-import { Title, Group, Button, Table, Modal, TextInput, Text, Stack, Card, Badge, ActionIcon, Tabs, Paper, Code } from '@mantine/core'
+import { Title, Group, Button, Table, Modal, TextInput, Text, Stack, Card, Badge, ActionIcon, Tabs, Paper, Code, Textarea } from '@mantine/core'
 import { useDisclosure } from '@mantine/hooks'
 import { useTranslation } from 'react-i18next'
 import { notifications } from '@mantine/notifications'
 import { useNavigate } from 'react-router-dom'
-import { IconRefresh, IconPlus, IconTrash, IconEdit } from '@tabler/icons-react'
+import { IconRefresh, IconPlus, IconTrash, IconEdit, IconEye, IconHistory } from '@tabler/icons-react'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { useConnectionStore } from '@/stores/connectionStore'
 
 interface KvStoreInfo { name: string; values: number; bytes: number }
 interface KvEntry { key: string; value: string; revision: number; created: string; operation: string }
+interface KvEntryDetail { key: string; value: string; revision: number; operation: string; delta: string; created: string }
+interface KvHistoryEntry { revision: number; operation: string; value: string; created: string }
 interface KvUpdateEvent { key: string; value: string; operation: string; revision: number }
 
 /** 将原始字节数转换为人类可读的字符串（B/KB/MB）。 */
@@ -33,6 +35,7 @@ export function KvStorePage() {
   /** 存储/条目获取是否正在进行中。 */
   const [loading, setLoading] = useState(false)
   const [editOpen, { open: openEdit, close: closeEdit }] = useDisclosure(false)
+  const [detailOpen, { open: openDetail, close: closeDetail }] = useDisclosure(false)
   /** 编辑/新建弹窗中正在编辑的键名。 */
   const [editingKey, setEditingKey] = useState('')
   /** 编辑/新建弹窗中正在编辑的值。 */
@@ -43,6 +46,12 @@ export function KvStorePage() {
   const [newBucketName, setNewBucketName] = useState('')
   /** KV 监听流中的日志行。 */
   const [watchLog, setWatchLog] = useState<string[]>([])
+  /** 当前查看的条目详情。 */
+  const [entryDetail, setEntryDetail] = useState<KvEntryDetail | null>(null)
+  /** 获取到的历史版本列表。 */
+  const [historyEntries, setHistoryEntries] = useState<KvHistoryEntry[]>([])
+  /** 查看详情的键名。 */
+  const [detailKey, setDetailKey] = useState('')
   let watchUnlisten: UnlistenFn | null = null
 
   /** 从当前连接获取 KV 存储列表。 */
@@ -69,6 +78,27 @@ export function KvStorePage() {
 
   /** 打开编辑弹窗，预填已有条目的数据。 */
   function handleEdit(e: KvEntry) { setEditingKey(e.key); setEditingValue(e.value); setIsNew(false); openEdit() }
+
+  /** 查看条目详情。 */
+  async function handleViewDetail(key: string) {
+    if (!selectedBucket) return
+    try {
+      setDetailKey(key)
+      setHistoryEntries([])
+      const detail = await invoke<KvEntryDetail>('kv_entry', { connectionId: currentId, bucket: selectedBucket, key })
+      setEntryDetail(detail)
+      openDetail()
+    } catch (e: any) { notifications.show({ message: `${t('common.failed')}: ${e}`, color: 'red' }) }
+  }
+
+  /** 查看条目的历史版本。 */
+  async function handleViewHistory(key: string) {
+    if (!selectedBucket) return
+    try {
+      const history = await invoke<KvHistoryEntry[]>('kv_history', { connectionId: currentId, bucket: selectedBucket, key })
+      setHistoryEntries(history)
+    } catch (e: any) { notifications.show({ message: `${t('common.failed')}: ${e}`, color: 'red' }) }
+  }
 
   /** 将键值对持久化到选中的存储桶。 */
   async function handleSave() {
@@ -185,14 +215,15 @@ export function KvStorePage() {
                   </Group>
                 </Group>
                 <Table striped highlightOnHover style={{ fontSize: 12 }}>
-                  <Table.Thead><Table.Tr><Table.Th>{t('kv.key')}</Table.Th><Table.Th>{t('kv.value')}</Table.Th><Table.Th w={80}>{t('kv.actions')}</Table.Th></Table.Tr></Table.Thead>
+                  <Table.Thead><Table.Tr><Table.Th>{t('kv.key')}</Table.Th><Table.Th>{t('kv.value')}</Table.Th><Table.Th w={106}>{t('kv.actions')}</Table.Th></Table.Tr></Table.Thead>
                   <Table.Tbody>
                     {entries.map((e) => (
                       <Table.Tr key={e.key}>
-                        <Table.Td ff="monospace" style={{ fontSize: 10 }}>{e.key}</Table.Td>
-                        <Table.Td ff="monospace" style={{ fontSize: 10 }}>{e.value.length > 60 ? e.value.slice(0, 60) + '...' : e.value}</Table.Td>
+                        <Table.Td ff="monospace" style={{ fontSize: 10, cursor: 'pointer' }} onClick={() => handleViewDetail(e.key)}>{e.key}</Table.Td>
+                        <Table.Td ff="monospace" style={{ fontSize: 10, cursor: 'pointer' }} onClick={() => handleViewDetail(e.key)}>{e.value.length > 60 ? e.value.slice(0, 60) + '...' : e.value}</Table.Td>
                         <Table.Td>
                           <Group gap={4}>
+                            <ActionIcon variant="subtle" size="xs" onClick={() => handleViewDetail(e.key)}><IconEye size={12} /></ActionIcon>
                             <ActionIcon variant="subtle" size="xs" onClick={() => handleEdit(e)}><IconEdit size={12} /></ActionIcon>
                             <ActionIcon variant="subtle" color="red" size="xs" onClick={() => handleDelete(e.key)}><IconTrash size={12} /></ActionIcon>
                           </Group>
@@ -225,6 +256,37 @@ export function KvStorePage() {
           </Code>
           <Button onClick={handleSave}>{t('common.save')}</Button>
         </Stack>
+      </Modal>
+
+      <Modal opened={detailOpen} onClose={closeDetail} title={t('kv.detail')} size="lg">
+        {entryDetail && (
+          <Stack gap="xs">
+            <TextInput label={t('kv.key')} value={entryDetail.key} readOnly />
+            <Textarea label={t('kv.value')} value={entryDetail.value} readOnly minRows={4} autosize style={{ fontFamily: 'monospace', fontSize: 12 }} />
+            <Group grow>
+              <TextInput label={t('kv.revision')} value={String(entryDetail.revision)} readOnly />
+              <TextInput label={t('kv.operation')} value={entryDetail.operation} readOnly />
+            </Group>
+            <TextInput label={t('kv.delta')} value={entryDetail.delta || '-'} readOnly />
+            <TextInput label={t('kv.created')} value={entryDetail.created} readOnly />
+            <Button variant="light" leftSection={<IconHistory size={14} />} onClick={() => handleViewHistory(detailKey)}>{t('kv.history')}</Button>
+            {historyEntries.length > 0 && (
+              <Table striped style={{ fontSize: 11 }} mt="xs">
+                <Table.Thead><Table.Tr><Table.Th>{t('kv.revision')}</Table.Th><Table.Th>{t('kv.operation')}</Table.Th><Table.Th>{t('kv.value')}</Table.Th><Table.Th>{t('kv.created')}</Table.Th></Table.Tr></Table.Thead>
+                <Table.Tbody>
+                  {historyEntries.map((h) => (
+                    <Table.Tr key={h.revision}>
+                      <Table.Td>{h.revision}</Table.Td>
+                      <Table.Td>{h.operation}</Table.Td>
+                      <Table.Td ff="monospace" style={{ fontSize: 10, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{h.value.length > 40 ? h.value.slice(0, 40) + '...' : h.value}</Table.Td>
+                      <Table.Td style={{ fontSize: 10 }}>{h.created}</Table.Td>
+                    </Table.Tr>
+                  ))}
+                </Table.Tbody>
+              </Table>
+            )}
+          </Stack>
+        )}
       </Modal>
     </div>
   )

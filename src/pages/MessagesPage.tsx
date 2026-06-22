@@ -42,6 +42,12 @@ export function MessagesPage() {
   const [pubReply, setPubReply] = useState('')
   /** 要发布的消息负载体。 */
   const [pubPayload, setPubPayload] = useState('{}')
+  /** NATS 请求头（键 -> 值列表）。 */
+  const [headers, setHeaders] = useState<Record<string, string[]>>({})
+  /** 新请求头的名称输入。 */
+  const [newHeaderName, setNewHeaderName] = useState('')
+  /** 新请求头的值输入。 */
+  const [newHeaderValue, setNewHeaderValue] = useState('')
   /** 发布操作是否正在进行中。 */
   const [publishing, setPublishing] = useState(false)
 
@@ -81,12 +87,44 @@ export function MessagesPage() {
     try { await unsubscribe(id, currentId!) } catch {}
   }
 
-  /** 向目标主题发布一条消息，可附带 reply-to 主题。 */
+  /** 向请求头列表中添加一个键值对。 */
+  function addHeader() {
+    const name = newHeaderName.trim()
+    const value = newHeaderValue.trim()
+    if (!name || !value) return
+    setHeaders((prev) => {
+      const next = { ...prev }
+      if (next[name]) {
+        next[name] = [...next[name], value]
+      } else {
+        next[name] = [value]
+      }
+      return next
+    })
+    setNewHeaderName('')
+    setNewHeaderValue('')
+  }
+
+  /** 通过名称从请求头列表中移除指定请求头。 */
+  function removeHeader(name: string) {
+    setHeaders((prev) => {
+      const next = { ...prev }
+      delete next[name]
+      return next
+    })
+  }
+
+  /** 向目标主题发布一条消息，可附带 reply-to 主题与请求头。 */
   async function handlePublish() {
     if (!pubSubject.trim()) return
     setPublishing(true)
     try {
-      await invoke('publish', { req: { connection_id: currentId!, subject: pubSubject.trim(), reply_to: pubReply.trim() || null, payload: pubPayload, headers: null } })
+      const headerEntries = Object.entries(headers)
+      if (headerEntries.length > 0) {
+        await invoke('publish_with_headers', { req: { connection_id: currentId!, subject: pubSubject.trim(), reply_to: pubReply.trim() || null, payload: pubPayload, headers: Object.fromEntries(headerEntries) } })
+      } else {
+        await invoke('publish', { req: { connection_id: currentId!, subject: pubSubject.trim(), reply_to: pubReply.trim() || null, payload: pubPayload, headers: null } })
+      }
       notifications.show({ message: t('messages.published'), color: 'green' })
     } catch (e: any) { notifications.show({ message: `${t('common.failed')}: ${e}`, color: 'red' }) }
     finally { setPublishing(false) }
@@ -135,6 +173,22 @@ export function MessagesPage() {
             <Stack gap="xs">
               <TopicInput value={pubSubject} onChange={setPubSubject} placeholder={t('messages.targetSubject')} />
               <TextInput size="xs" value={pubReply} onChange={(e) => setPubReply(e.target.value)} placeholder={t('messages.replyOptional')} />
+              <Group gap="xs" align="end" wrap="wrap">
+                <TextInput size="xs" style={{ flex: 1, minWidth: 120 }} value={newHeaderName} onChange={(e) => setNewHeaderName(e.target.value)} placeholder="Header Name" onKeyDown={(e) => { if (e.key === 'Enter') addHeader() }} />
+                <TextInput size="xs" style={{ flex: 1, minWidth: 120 }} value={newHeaderValue} onChange={(e) => setNewHeaderValue(e.target.value)} placeholder="Header Value" onKeyDown={(e) => { if (e.key === 'Enter') addHeader() }} />
+                <Button size="compact-xs" variant="light" onClick={addHeader}>Add</Button>
+              </Group>
+              {Object.keys(headers).length > 0 && (
+                <Group gap={4}>
+                  {Object.entries(headers).flatMap(([name, values]) =>
+                    values.map((value, i) => (
+                      <Badge key={`${name}-${i}`} size="sm" variant="light" rightSection={<IconTrash size={11} style={{ cursor: 'pointer' }} onClick={() => removeHeader(name)} />}>
+                        {name}: {value}
+                      </Badge>
+                    ))
+                  )}
+                </Group>
+              )}
               <PayloadEditor value={pubPayload} onChange={setPubPayload} />
               <Button onClick={handlePublish} loading={publishing}>{t('messages.publishButton')}</Button>
             </Stack>

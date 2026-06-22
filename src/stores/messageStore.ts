@@ -6,6 +6,7 @@
 import { create } from 'zustand'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import type { NatsMessageEvent } from '@/types'
+import { logger } from '@/utils/logger'
 
 /** 内存缓冲区中保留的最大消息数。 */
 const MAX_MESSAGES = 10000
@@ -36,6 +37,7 @@ export const useMessageStore = create<MessageState>((set, get) => ({
         return { messages: msgs }
       })
     })
+    logger.info('Message listener started')
     set({ unlisten: ul })
   },
 
@@ -43,11 +45,15 @@ export const useMessageStore = create<MessageState>((set, get) => ({
     const { unlisten } = get()
     if (unlisten) {
       unlisten()
+      logger.info('Message listener stopped')
       set({ unlisten: null })
     }
   },
 
-  clearMessages: () => set({ messages: [] }),
+  clearMessages: () => {
+    logger.info('Messages cleared')
+    set({ messages: [] })
+  },
 
   getForSubscription: (id) => {
     return get().messages.filter((m) => m.subscription_id === id)
